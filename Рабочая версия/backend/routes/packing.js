@@ -20,14 +20,29 @@ const rackOrder = new Map(rackOrderList.map((num, idx) => [num, idx]));
 const parseCellAddress = (addr) => {
   if (!addr) return { rack: null, shelf: null, cell: null };
   const s = String(addr).trim();
+  const normalized = s.replace(/\s+/g, ' ').trim();
 
-  const rackMatch = s.match(/стел+аж\.?\s*(\d+)/i);
-  const shelfMatch = s.match(/полк(?:а|и|\.?)\s*(\d+)/i);
-  const cellMatch = s.match(/яч(?:ейк\w*|\.?)\s*([A-Za-zА-Яа-я0-9]+)/i);
+  // Примеры products.cell_address из warehouse.db:
+  // "Стеллаж 8 полка 1 ячейка A"
+  // "Стеллаж 19  полка 2 ячейка A"
+  // "Стеллаж 42 полка 2 ячейка A"
 
-  const rack = rackMatch ? Number(rackMatch[1]) : null;
-  const shelf = shelfMatch ? Number(shelfMatch[1]) : null;
-  const cell = cellMatch ? String(cellMatch[1]).toUpperCase() : null;
+  const rackMatch = normalized.match(/(?:стел(?:лаж|аж)?|ст)\.?\s*[-,/ ]*\s*(\d+)/i);
+  const shelfMatch = normalized.match(/(?:полк(?:а|и|е)?|полк)\.?\s*[-,/ ]*\s*(\d+)/i);
+  const cellMatch = normalized.match(/(?:яч(?:ейк[аиы]?)?|яч)\.?\s*[-,/ ]*\s*([A-Za-zА-Яа-я0-9]+)/i);
+
+  let rack = rackMatch ? Number(rackMatch[1]) : null;
+  let shelf = shelfMatch ? Number(shelfMatch[1]) : null;
+  let cell = cellMatch ? String(cellMatch[1]).toUpperCase() : null;
+
+  if (rack === null || shelf === null || cell === null) {
+    const fallbackMatch = normalized.match(/(^|\b)(\d+)\s*[-/,]\s*(\d+)\s*[-/,]\s*([A-Za-zА-Яа-я0-9]+)(\b|$)/);
+    if (fallbackMatch) {
+      if (rack === null) rack = Number(fallbackMatch[2]);
+      if (shelf === null) shelf = Number(fallbackMatch[3]);
+      if (cell === null) cell = String(fallbackMatch[4]).toUpperCase();
+    }
+  }
 
   return { rack, shelf, cell };
 };
