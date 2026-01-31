@@ -111,6 +111,7 @@ function PackingPage({ showToast }) {
   const [boxes, setBoxes] = useState([]);
   const [activeBoxId, setActiveBoxId] = useState(null);
   const [markingModal, setMarkingModal] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
@@ -190,6 +191,18 @@ function PackingPage({ showToast }) {
       setTimeout(() => markingRef.current?.focus(), 50);
     }
   }, [markingModal]);
+
+  const openImagePreview = (src, name) => {
+    if (!src) return;
+    setImagePreview({ src, name });
+  };
+
+  const closeImagePreview = () => {
+    setImagePreview(null);
+    if (activeTask?.status === 'active') {
+      setTimeout(() => scanRef.current?.focus(), 50);
+    }
+  };
 
   
 
@@ -429,10 +442,20 @@ function PackingPage({ showToast }) {
           {taskItems.map(item=>{
             const complete = (item.scanned_qty||0) >= (item.planned_qty||0);
             const hasStock = (item.stock||0) > 0;
+            const imageSrc = getProductImageUrl(item.product_id) || getProxiedImageUrl(item.image_url);
             return (
               <div key={item.id} className={`card flex items-center gap-4 ${complete?'bg-emerald-50':!hasStock?'bg-red-50':''}`}>
-                <div className="w-14 h-14 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden">
-                  {item.image_url ? <img src={getProxiedImageUrl(item.image_url)} alt="" className="w-full h-full object-cover"/> : <Package className="w-6 h-6 text-gray-400"/>}
+                <div className="w-14 h-14 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden relative">
+                  <Package className="w-6 h-6 text-gray-400"/>
+                  {imageSrc && (
+                    <img
+                      src={imageSrc}
+                      alt={item.name}
+                      className="absolute inset-0 w-full h-full object-cover cursor-zoom-in"
+                      onClick={() => openImagePreview(imageSrc, item.name)}
+                      onError={(e)=>{e.currentTarget.style.display='none';}}
+                    />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{item.name}</p>
@@ -491,6 +514,21 @@ function PackingPage({ showToast }) {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {imagePreview && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={closeImagePreview}>
+            <div className="bg-white rounded-2xl p-4 max-w-3xl w-full max-h-[90vh] overflow-auto" onClick={e=>e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h3 className="font-semibold">{imagePreview.name || 'Фото товара'}</h3>
+                  <p className="text-xs text-gray-500">Нажмите вне окна, чтобы закрыть</p>
+                </div>
+                <button className="btn-secondary text-sm" onClick={closeImagePreview}>Закрыть</button>
+              </div>
+              <img src={imagePreview.src} alt={imagePreview.name || 'Фото товара'} className="w-full h-auto rounded-xl"/>
             </div>
           </div>
         )}
@@ -631,6 +669,7 @@ function ReceivingPage({ showToast }) {
   const [showOrders, setShowOrders] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showDefectModal, setShowDefectModal] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [showUndoConfirm, setShowUndoConfirm] = useState(false);
   const [defectQty, setDefectQty] = useState(0);
   const [products, setProducts] = useState([]);
@@ -656,6 +695,18 @@ function ReceivingPage({ showToast }) {
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('click', onClick); document.removeEventListener('keydown', onKey); };
   }, [activeSession, sessionData, showAddProduct, showDefectModal, showUndoConfirm]);
+
+  const openImagePreview = (src, name) => {
+    if (!src) return;
+    setImagePreview({ src, name });
+  };
+
+  const closeImagePreview = () => {
+    setImagePreview(null);
+    if (activeSession && sessionData?.status === 'active') {
+      setTimeout(() => scanRef.current?.focus(), 50);
+    }
+  };
 
   const handleCreateSession = async (orderId=null) => { try { const {data} = await api.post('/receiving/sessions',{purchaseOrderId:orderId}); showToast('Создано','success'); setShowOrders(false); loadSessions(); loadSession(data.sessionId); } catch(err) { showToast('Ошибка','error'); }};
   const handleScan = async (barcode) => { if (!barcode.trim()) return; try { const {data} = await api.post(`/receiving/sessions/${activeSession}/scan`,{barcode:barcode.trim()}); if(data.isExtra){playSound('warning');showToast(`⚠️ ПЕРЕСОРТ: ${data.product} +${data.received}`,'error');}else{playSound('success');showToast(`✓ ${data.product}: ${data.received}/${data.ordered}`,'success');} setCanUndo(true); loadSession(activeSession); } catch(err) { playSound('error'); showToast(err.response?.data?.error||'Не найден','error'); }};
@@ -719,7 +770,15 @@ function ReceivingPage({ showToast }) {
                       <div className="flex gap-4">
                         <div className="w-20 h-20 rounded-xl bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border relative">
                           <Package className="w-8 h-8 text-gray-300" />
-                          {imageSrc && <img src={imageSrc} alt="" className="absolute inset-0 w-full h-full object-cover" onError={e=>{e.currentTarget.style.display='none';}}/>}
+                          {imageSrc && (
+                            <img
+                              src={imageSrc}
+                              alt={item.name}
+                              className="absolute inset-0 w-full h-full object-cover cursor-zoom-in"
+                              onClick={() => openImagePreview(imageSrc, item.name)}
+                              onError={e=>{e.currentTarget.style.display='none';}}
+                            />
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm mb-1 line-clamp-2">{item.name}</p>
@@ -748,7 +807,15 @@ function ReceivingPage({ showToast }) {
                     <div key={item.id} className="p-3 flex items-center gap-3">
                       <div className="w-12 h-12 rounded-lg bg-amber-100 flex-shrink-0 flex items-center justify-center overflow-hidden relative">
                         <Package className="w-5 h-5 text-amber-500"/>
-                        {imageSrc && <img src={imageSrc} alt="" className="absolute inset-0 w-full h-full object-cover" onError={e=>{e.currentTarget.style.display='none';}}/>}
+                        {imageSrc && (
+                          <img
+                            src={imageSrc}
+                            alt={item.name}
+                            className="absolute inset-0 w-full h-full object-cover cursor-zoom-in"
+                            onClick={() => openImagePreview(imageSrc, item.name)}
+                            onError={e=>{e.currentTarget.style.display='none';}}
+                          />
+                        )}
                       </div>
                       <div className="flex-1 min-w-0"><p className="font-medium text-sm truncate text-amber-900">{item.name}</p><p className="text-xs text-amber-600 font-mono">{item.barcode||item.article}</p></div>
                       <div className="text-xl font-bold text-amber-600">+{item.received_qty}</div>
@@ -778,6 +845,21 @@ function ReceivingPage({ showToast }) {
         </div>
 
         {showUndoConfirm && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setShowUndoConfirm(false)}><div className="bg-white rounded-2xl p-6 max-w-sm w-full" onClick={e=>e.stopPropagation()}><div className="text-center mb-4"><div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4"><AlertTriangle className="w-8 h-8 text-amber-600"/></div><h2 className="text-lg font-bold">Отменить последнее сканирование?</h2></div><div className="flex gap-3"><button onClick={()=>setShowUndoConfirm(false)} className="flex-1 py-3 rounded-xl border-2 font-medium hover:bg-gray-50">Нет</button><button onClick={handleUndo} className="flex-1 py-3 rounded-xl bg-amber-500 text-white font-medium">Да</button></div></div></div>}
+
+        {imagePreview && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={closeImagePreview}>
+            <div className="bg-white rounded-2xl p-4 max-w-3xl w-full max-h-[90vh] overflow-auto" onClick={e=>e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h3 className="font-semibold">{imagePreview.name || 'Фото товара'}</h3>
+                  <p className="text-xs text-gray-500">Нажмите вне окна, чтобы закрыть</p>
+                </div>
+                <button className="btn-secondary text-sm" onClick={closeImagePreview}>Закрыть</button>
+              </div>
+              <img src={imagePreview.src} alt={imagePreview.name || 'Фото товара'} className="w-full h-auto rounded-xl"/>
+            </div>
+          </div>
+        )}
 
         {showDefectModal && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setShowDefectModal(null)}><div className="bg-white rounded-2xl p-6 max-w-sm w-full" onClick={e=>e.stopPropagation()}><div className="flex items-center gap-3 mb-4"><div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center"><AlertTriangle className="w-6 h-6 text-red-600"/></div><div><h2 className="text-lg font-bold">Указать брак</h2><p className="text-sm text-gray-500">{showDefectModal.article||'—'}</p></div></div><p className="text-sm text-gray-600 mb-4">{showDefectModal.name}</p><div className="flex items-center justify-center gap-4 mb-4 py-4 bg-gray-50 rounded-xl"><button onClick={()=>setDefectQty(Math.max(0,defectQty-1))} className="w-12 h-12 rounded-xl bg-white border-2 flex items-center justify-center"><Minus className="w-5 h-5"/></button><span className="text-4xl font-bold text-red-600 w-20 text-center">{defectQty}</span><button onClick={()=>setDefectQty(defectQty+1)} className="w-12 h-12 rounded-xl bg-white border-2 flex items-center justify-center"><Plus className="w-5 h-5"/></button></div><div className="flex gap-3"><button onClick={()=>setShowDefectModal(null)} className="flex-1 py-3 rounded-xl border-2 font-medium">Отмена</button><button onClick={handleSetDefect} className="flex-1 py-3 rounded-xl bg-red-600 text-white font-medium">Сохранить</button></div></div></div>}
 
