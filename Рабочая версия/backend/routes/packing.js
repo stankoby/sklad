@@ -525,12 +525,12 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     });
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
-    const availableWithShelf = available.filter((i) => i.rack !== null && i.shelf !== null && i.cell !== null);
+    const availableForRoute = available;
     const hangingStock = available.filter((i) => i.rack === null || i.shelf === null || i.cell === null);
-    availableWithShelf.sort(sortByRoute);
+    availableForRoute.sort(sortByRoute);
 
     const zonesMap = new Map();
-    for (const it of availableWithShelf) {
+    for (const it of availableForRoute) {
       const key = it.rack ?? 'Без ячейки';
       const qtyToCollect = Math.max((it.planned_qty || 0) - (it.scanned_qty || 0), 0);
       if (qtyToCollect <= 0) continue;
@@ -564,12 +564,12 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     }
 
     const noStock = withLoc.filter((i) => (i.stock ?? 0) <= 0 && i.planned_qty > 0);
-    const totalToCollect = availableWithShelf.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
+    const totalToCollect = availableForRoute.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
 
     res.json({
       task,
       zones,
-      available: availableWithShelf.length,
+      available: availableForRoute.length,
       totalToCollect,
       noStock,
       noStockCount: noStock.length,
