@@ -185,17 +185,26 @@ router.post('/tasks/upload', upload.single('file'), async (req, res) => {
 
     // Авто-обновление адресов хранения (ячейки) для товаров задачи
     try {
+      console.log('[slots] start refresh cell_address');
       const moysklad = getMoySkladService();
+      console.log('[slots] getMoySkladService() ok');
       const uniqIds = [...new Set(items.map((i) => i.product.id).filter(Boolean))];
       const storeIdEnv = (process.env.MOYSKLAD_STORE_ID || '').trim() || null;
+      const storeNameEnv = (process.env.MOYSKLAD_STORE_NAME || '').trim() || null;
       const storeId = storeIdEnv || (await moysklad.storeId());
+
+      if (!storeIdEnv && !storeNameEnv) {
+        console.warn('[slots] MOYSKLAD_STORE_ID/NAME not set, using service lookup');
+      }
 
       if (!storeId) {
         throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_ID или MOYSKLAD_STORE_NAME');
       }
 
+      console.log(`[slots] storeId=${storeId} items=${uniqIds.length}`);
       const slotNameById = await moysklad.getStoreSlotNameMap(storeId);
       const rows = await moysklad.getSlotsCurrentForAssortments(uniqIds, storeId);
+      console.log(`[slots] rows=${rows.length}`);
 
       const bestById = new Map();
       const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -213,12 +222,22 @@ router.post('/tasks/upload', upload.single('file'), async (req, res) => {
         }
       }
 
+      console.log(`[slots] bestById.size=${bestById.size}`);
+      if (rows.length === 0) {
+        console.warn('[slots] slots response is empty: check getSlotsCurrentForAssortments and slot permissions in MoySklad');
+      }
       if (bestById.size > 0) {
         const upd = db.prepare('UPDATE products SET cell_address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+        let updatedRows = 0;
         for (const [pid, v] of bestById.entries()) {
-          upd.run(v.addr, pid);
+          const result = upd.run(v.addr, pid);
+          updatedRows += result?.changes || 0;
         }
-        console.log(`[slots] updated cell_address for ${bestById.size} products`);
+        if (updatedRows === 0) {
+          console.warn('[slots] addresses resolved but no rows updated: check products existence and updated_at column');
+        } else {
+          console.log(`[slots] updated cell_address for ${updatedRows} products`);
+        }
       } else {
         console.warn('[slots] no locations resolved (bestById empty).');
       }
