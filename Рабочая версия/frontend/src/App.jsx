@@ -371,6 +371,16 @@ function PackingPage({ showToast }) {
     }
   };
 
+  const getRouteZoneEntries = (zones) => {
+    if (Array.isArray(zones)) {
+      return zones.map((zone) => [zone?.rack ?? '—', Array.isArray(zone?.items) ? zone.items : []]);
+    }
+    if (zones && typeof zones === 'object') {
+      return Object.entries(zones);
+    }
+    return [];
+  };
+
   if (activeTask) {
     const total = taskItems.reduce((s,i)=>s+(i.planned_qty||0),0);
     const scanned = taskItems.reduce((s,i)=>s+(i.scanned_qty||0),0);
@@ -497,7 +507,7 @@ function PackingPage({ showToast }) {
               
               <p className="text-sm text-gray-500 mb-4">К сбору: <strong>{routeSheet.totalToCollect}</strong> шт из {routeSheet.available} позиций</p>
               
-              {Object.entries(routeSheet.zones).map(([zone, items]) => (
+              {getRouteZoneEntries(routeSheet.zones).map(([zone, items]) => (
                 <div key={zone} className="mb-4">
                   <h3 className="font-bold text-lg bg-blue-100 text-blue-800 px-3 py-2 rounded-lg mb-2">Стеллаж {zone}</h3>
                   <div className="space-y-2">
