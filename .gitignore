@@ -1,0 +1,6 @@
+__MACOSX/
+*.zip
+**/.DS_Store
+**/node_modules/
+**/.env
+**/*.db
