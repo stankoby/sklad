@@ -285,17 +285,23 @@ class MoySkladService {
   // Без assortmentId отчёт не работает (так устроено API), поэтому вызываем его
   // точечно — только для товаров в задаче.
   async getSlotsCurrentForAssortments(assortmentIds, storeId = null) {
-    const ids = (assortmentIds || []).map(String).filter(Boolean);
+    const normalizeId = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const withoutQuery = raw.split('?')[0];
+      const parts = withoutQuery.split('/');
+      return parts[parts.length - 1] || raw;
+    };
+
+    const ids = (assortmentIds || []).map(normalizeId).filter(Boolean);
     if (!ids.length) return [];
 
     // Определяем склад
-    let sid = storeId ? String(storeId).trim() : '';
+    let sid = storeId ? normalizeId(storeId) : '';
     if (!sid) {
       const storeName = (process.env.MOYSKLAD_STORE_NAME || 'Склад хранения.').trim();
       const storeHref = await this.findStoreHref(storeName);
-      if (storeHref) {
-        sid = String(storeHref).split('/').pop();
-      }
+      if (storeHref) sid = normalizeId(storeHref);
     }
     if (!sid) {
       throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
