@@ -341,8 +341,10 @@ router.post('/sync', async (req, res) => {
 
       // Получаем URL миниатюры изображения (для variants обычно нет)
       const pickImageUrl = (images) => {
-        if (!images || images?.meta?.size <= 0 || images?.rows?.length <= 0) return null;
-        const img = images.rows[0];
+        if (!images || images?.meta?.size <= 0) return null;
+        const rows = Array.isArray(images?.rows) ? images.rows : [];
+        if (rows.length === 0) return null;
+        const img = rows[0];
         return img?.miniature?.href || img?.tiny?.href || null;
       };
 
