@@ -525,13 +525,12 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     });
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
-    const availableForRoute = available;
-    const hangingStock = available.filter((i) => i.rack === null || i.shelf === null || i.cell === null);
-    availableForRoute.sort(sortByRoute);
+    const availableWithShelf = available.filter((i) => i.rack !== null && i.shelf !== null && i.cell !== null);
+    availableWithShelf.sort(sortByRoute);
 
     const zonesMap = new Map();
-    for (const it of availableForRoute) {
-      const key = it.rack ?? 'Без ячейки';
+    for (const it of availableWithShelf) {
+      const key = it.rack;
       const qtyToCollect = Math.max((it.planned_qty || 0) - (it.scanned_qty || 0), 0);
       if (qtyToCollect <= 0) continue;
       if (!zonesMap.has(key)) zonesMap.set(key, []);
@@ -550,8 +549,6 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
 
     const zones = {};
     const orderedKeys = Array.from(zonesMap.keys()).sort((a, b) => {
-      if (a === 'Без ячейки') return 1;
-      if (b === 'Без ячейки') return -1;
       const ar = Number(a);
       const br = Number(b);
       const aOrder = rackOrder.get(ar) ?? 1000 + ar;
@@ -564,16 +561,15 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     }
 
     const noStock = withLoc.filter((i) => (i.stock ?? 0) <= 0 && i.planned_qty > 0);
-    const totalToCollect = availableForRoute.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
+    const totalToCollect = availableWithShelf.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
 
     res.json({
       task,
       zones,
-      available: availableForRoute.length,
+      available: availableWithShelf.length,
       totalToCollect,
       noStock,
-      noStockCount: noStock.length,
-      hangingStock
+      noStockCount: noStock.length
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
