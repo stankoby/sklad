@@ -525,8 +525,9 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     });
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
-    const availableForRoute = available;
+    const availableWithShelf = available.filter((i) => i.rack !== null && i.shelf !== null && i.cell !== null);
     const hangingStock = available.filter((i) => i.rack === null || i.shelf === null || i.cell === null);
+    const availableForRoute = availableWithShelf;
     availableForRoute.sort(sortByRoute);
 
     const zonesMap = new Map();
@@ -564,16 +565,30 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     }
 
     const noStock = withLoc.filter((i) => (i.stock ?? 0) <= 0 && i.planned_qty > 0);
-    const totalToCollect = availableForRoute.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
+    const totalToCollect = available.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
+    const hangingStockList = hangingStock
+      .map((it) => ({
+        id: it.id,
+        product_id: it.product_id,
+        name: it.name,
+        barcode: it.barcode,
+        cell_address: it.cell_address,
+        qty_to_collect: Math.max((it.planned_qty || 0) - (it.scanned_qty || 0), 0),
+        planned_qty: it.planned_qty,
+        scanned_qty: it.scanned_qty,
+        stock: it.stock
+      }))
+      .filter((it) => it.qty_to_collect > 0);
 
     res.json({
       task,
       zones,
-      available: availableForRoute.length,
+      available: available.length,
       totalToCollect,
       noStock,
       noStockCount: noStock.length,
-      hangingStock
+      availableWithShelfCount: availableWithShelf.length,
+      hangingStock: hangingStockList
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

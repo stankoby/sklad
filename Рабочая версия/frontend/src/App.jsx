@@ -496,6 +496,24 @@ function PackingPage({ showToast }) {
               )}
               
               <p className="text-sm text-gray-500 mb-4">К сбору: <strong>{routeSheet.totalToCollect}</strong> шт из {routeSheet.available} позиций</p>
+
+              {routeSheet.availableWithShelfCount === 0 && routeSheet.hangingStock?.length > 0 && (
+                <div className="mb-4">
+                  <h3 className="font-bold text-lg bg-amber-100 text-amber-800 px-3 py-2 rounded-lg mb-2">Без адреса</h3>
+                  <div className="space-y-2">
+                    {routeSheet.hangingStock.map(item => (
+                      <div key={item.id} className="flex items-center gap-3 p-2 bg-amber-50 rounded-lg">
+                        <span className="font-mono text-sm bg-white px-2 py-1 rounded border">{item.cell_address||'—'}</span>
+                        <div className="flex-1">
+                          <p className="font-medium text-sm">{item.name}</p>
+                          <p className="text-xs text-gray-500">{item.barcode}</p>
+                        </div>
+                        <span className="font-bold text-lg">{item.qty_to_collect}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               
               {Object.entries(routeSheet.zones).map(([zone, items]) => (
                 <div key={zone} className="mb-4">
