@@ -1,14 +1,34 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { loadEnvFile, resolveEnvPath } from './utils/env.js';
 
 import productsRouter from './routes/products.js';
 import packingRouter from './routes/packing.js';
 import receivingRouter from './routes/receiving.js';
 import { getDb } from './database.js';
 
+const envPath = resolveEnvPath();
+const hasEnvFile = loadEnvFile(envPath);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const hasToken = Boolean(process.env.MOYSKLAD_TOKEN);
+const hasLogin = Boolean(process.env.MOYSKLAD_LOGIN);
+const hasPassword = Boolean(process.env.MOYSKLAD_PASSWORD);
+const hasAuth = hasToken || (hasLogin && hasPassword);
+
+if (!hasAuth) {
+  const hint = hasEnvFile
+    ? 'Missing MOYSKLAD_TOKEN or MOYSKLAD_LOGIN + MOYSKLAD_PASSWORD in .env.'
+    : 'Missing .env file. Copy .env.example to .env and set MOYSKLAD_TOKEN.';
+  console.error(`❌ ${hint}`);
+  process.exit(1);
+}
+
+if (!process.env.MOYSKLAD_STORE_ID && !process.env.MOYSKLAD_STORE_NAME) {
+  console.warn('⚠️  MOYSKLAD_STORE_ID/MOYSKLAD_STORE_NAME не заданы. Некоторые функции могут работать некорректно.');
+}
 
 app.use(cors());
 app.use(express.json());

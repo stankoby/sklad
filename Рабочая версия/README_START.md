@@ -1,27 +1,62 @@
-# Warehouse MVP (Packing + Boxes)
+# Warehouse MVP — быстрый старт на macOS
 
-## Requirements
-- Node.js **20 LTS** recommended (works best). If you use nvm: `nvm use` will pick it up.
+Ниже — самый простой сценарий “скачал ZIP → запустил”.
 
-## First run (from project root)
-### Backend
+## 1) Подготовка (один раз)
+1. Установите **Node.js 20 LTS** с https://nodejs.org/
+2. Проверьте, что Node установлен:
+   ```bash
+   node -v
+   npm -v
+   ```
+
+## 2) Распаковка
+1. Распакуйте ZIP в удобную папку.
+2. Откройте Терминал и перейдите в папку проекта.
+
+## 3) Запуск backend
 ```bash
 cd backend
 cp .env.example .env
-# put your real MOYSKLAD_TOKEN into backend/.env
-npm install
-npm run dev
+# откройте backend/.env и вставьте ваш MOYSKLAD_TOKEN
+npm ci
+npm run doctor
+npm run smoke
+npm start
 ```
 
-### Frontend (new terminal)
+**Что должно быть в терминале при успехе:**
+- `Doctor check: всё выглядит готовым к запуску.`
+- `Smoke test: /api/health отвечает корректно.`
+- `Warehouse API running at http://localhost:3001`
+
+## 4) Запуск frontend (в новом окне терминала)
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open the URL shown by Vite (usually http://localhost:5173).
+Откройте URL, который покажет Vite (обычно http://localhost:5173).
 
-## Notes
-- `backend/warehouse.db` is created automatically on first backend start (schema is created by `backend/database.js`).
-- Do **NOT** commit `.env` or `node_modules`.
+## Частые проблемы и решения
+### ❌ “Missing .env file” или “Missing MOYSKLAD_TOKEN”
+Проверьте, что в `backend/.env` есть строка:
+```
+MOYSKLAD_TOKEN=ВАШ_ТОКЕН
+```
+Если у вас доступ через логин/пароль, используйте:
+```
+MOYSKLAD_LOGIN=...
+MOYSKLAD_PASSWORD=...
+```
+
+### ❌ “Порт 3001 уже занят”
+Закройте приложение, которое использует порт 3001, или добавьте в `.env`:
+```
+PORT=3002
+```
+
+## Заметки
+- `backend/warehouse.db` создаётся автоматически на первом запуске.
+- `.env` и `node_modules` в репозиторий не коммитятся.
