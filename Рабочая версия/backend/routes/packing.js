@@ -22,8 +22,8 @@ const parseCellAddress = (addr) => {
   const s = String(addr).trim();
 
   const rackMatch = s.match(/стел+аж\.?\s*(\d+)/i);
-  const shelfMatch = s.match(/полка\s*(\d+)/i);
-  const cellMatch = s.match(/ячейк\S*\s*([A-Za-zА-Яа-я0-9]+)/i);
+  const shelfMatch = s.match(/полк(?:а|и|\.?)\s*(\d+)/i);
+  const cellMatch = s.match(/яч(?:ейк\w*|\.?)\s*([A-Za-zА-Яа-я0-9]+)/i);
 
   const rack = rackMatch ? Number(rackMatch[1]) : null;
   const shelf = shelfMatch ? Number(shelfMatch[1]) : null;
@@ -525,10 +525,12 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     });
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
-    available.sort(sortByRoute);
+    const availableWithShelf = available.filter((i) => i.rack !== null && i.shelf !== null && i.cell !== null);
+    const hangingStock = available.filter((i) => i.rack === null || i.shelf === null || i.cell === null);
+    availableWithShelf.sort(sortByRoute);
 
     const zonesMap = new Map();
-    for (const it of available) {
+    for (const it of availableWithShelf) {
       const key = it.rack ?? 'Без ячейки';
       const qtyToCollect = Math.max((it.planned_qty || 0) - (it.scanned_qty || 0), 0);
       if (qtyToCollect <= 0) continue;
@@ -562,15 +564,16 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
     }
 
     const noStock = withLoc.filter((i) => (i.stock ?? 0) <= 0 && i.planned_qty > 0);
-    const totalToCollect = available.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
+    const totalToCollect = availableWithShelf.reduce((sum, i) => sum + Math.max((i.planned_qty || 0) - (i.scanned_qty || 0), 0), 0);
 
     res.json({
       task,
       zones,
-      available: available.length,
+      available: availableWithShelf.length,
       totalToCollect,
       noStock,
-      noStockCount: noStock.length
+      noStockCount: noStock.length,
+      hangingStock
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
