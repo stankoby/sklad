@@ -20,16 +20,44 @@ const rackOrder = new Map(rackOrderList.map((num, idx) => [num, idx]));
 const parseCellAddress = (addr) => {
   if (!addr) return { rack: null, shelf: null, cell: null };
   const s = String(addr).trim();
+  const normalized = s.replace(/\s+/g, ' ');
+  const separator = '[-/;,]';
 
-  const rackMatch = s.match(/стел+аж\.?\s*(\d+)/i);
-  const shelfMatch = s.match(/полк(?:а|и|\.?)\s*(\d+)/i);
-  const cellMatch = s.match(/яч(?:ейк\w*|\.?)\s*([A-Za-zА-Яа-я0-9]+)/i);
+  const labeledCombo = new RegExp(
+    String.raw`(?:^|\\b)ст(?:ел(?:лаж)?)?\\.?\\s*(\\d+)\\s*${separator}\\s*(?:полк(?:а|и)?\\.?\\s*)?(\\d+)\\s*${separator}\\s*(?:яч(?:ейк\\w*)?\\.?\\s*)?([A-Za-zА-Яа-я0-9]+)`,
+    'i'
+  );
+  const labeledMatch = normalized.match(labeledCombo);
+  if (labeledMatch) {
+    return {
+      rack: Number(labeledMatch[1]),
+      shelf: Number(labeledMatch[2]),
+      cell: String(labeledMatch[3]).toUpperCase()
+    };
+  }
+
+  const rackMatch = normalized.match(/(?:^|\b)ст(?:ел(?:лаж)?)?\.?\s*(\d+)/i);
+  const shelfMatch = normalized.match(/(?:^|\b)полк(?:а|и)?\.?\s*(\d+)/i);
+  const cellMatch = normalized.match(/(?:^|\b)яч(?:ейк\w*)?\.?\s*([A-Za-zА-Яа-я0-9]+)/i);
 
   const rack = rackMatch ? Number(rackMatch[1]) : null;
   const shelf = shelfMatch ? Number(shelfMatch[1]) : null;
   const cell = cellMatch ? String(cellMatch[1]).toUpperCase() : null;
 
-  return { rack, shelf, cell };
+  if (rack !== null || shelf !== null || cell !== null) {
+    return { rack, shelf, cell };
+  }
+
+  const simpleMatch = normalized.match(new RegExp(`^(\\d+)\\s*${separator}\\s*(\\d+)\\s*${separator}\\s*([A-Za-zА-Яа-я0-9]+)$`));
+  if (simpleMatch) {
+    return {
+      rack: Number(simpleMatch[1]),
+      shelf: Number(simpleMatch[2]),
+      cell: String(simpleMatch[3]).toUpperCase()
+    };
+  }
+
+  return { rack: null, shelf: null, cell: null };
 };
 
 const sortByRoute = (a, b) => {
@@ -523,6 +551,20 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
       const loc = parseCellAddress(it.cell_address);
       return { ...it, ...loc };
     });
+
+    const unknownAddresses = new Set();
+    for (const it of withLoc) {
+      if (!it.cell_address) continue;
+      if (it.rack === null || it.shelf === null || it.cell === null) {
+        unknownAddresses.add(String(it.cell_address).trim());
+      }
+    }
+    if (unknownAddresses.size > 0) {
+      await logAction('packing_cell_address_unparsed', 'packing_task', taskId, {
+        total: unknownAddresses.size,
+        samples: Array.from(unknownAddresses).slice(0, 20)
+      });
+    }
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
     const availableForRoute = available;
