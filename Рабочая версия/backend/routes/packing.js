@@ -519,10 +519,13 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
       WHERE pti.task_id = ?
     `).all(taskId);
 
+    const sampleCellAddress = items.slice(0, 5).map((it) => it.cell_address);
     const withLoc = items.map((it) => {
       const loc = parseCellAddress(it.cell_address);
       return { ...it, ...loc };
     });
+    const parsedCount = withLoc.filter((it) => it.rack !== null && it.shelf !== null && it.cell !== null).length;
+    const totalItems = items.length;
 
     const available = withLoc.filter((i) => (i.stock ?? 0) > 0 && i.planned_qty > 0);
     const availableForRoute = available;
@@ -573,7 +576,10 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
       totalToCollect,
       noStock,
       noStockCount: noStock.length,
-      hangingStock
+      hangingStock,
+      sampleCellAddress,
+      parsedCount,
+      totalItems
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
