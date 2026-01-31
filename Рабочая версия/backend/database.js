@@ -289,4 +289,8 @@ export async function getDb() {
   return dbWrapper;
 }
 
-export default { getDb, logAction };
+export function getDbPath() {
+  return DB_PATH;
+}
+
+export default { getDb, logAction, getDbPath };

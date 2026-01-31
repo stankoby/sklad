@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { getDb, logAction } from '../database.js';
+import { getDb, getDbPath, logAction } from '../database.js';
 import { getMoySkladService } from '../services/moysklad.js';
 
 const router = Router();
@@ -573,7 +573,8 @@ router.get('/tasks/:id/route-sheet', async (req, res) => {
       totalToCollect,
       noStock,
       noStockCount: noStock.length,
-      hangingStock
+      hangingStock,
+      dbPath: getDbPath()
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
