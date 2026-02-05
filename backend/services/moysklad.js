@@ -253,9 +253,8 @@ class MoySkladService {
     }
     if (!sid) throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
 
-    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 50);
+    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 20);
     const limit = 1000;
-    const storeHref = `${BASE_URL}/entity/store/${sid}`;
 
     const allRows = [];
     const chunks = [];
@@ -263,10 +262,10 @@ class MoySkladService {
 
     try {
       const probe = await this.client.get('/report/stock/byslot/current', {
-        params: { filter: `store=${storeHref}`, limit: 1, offset: 0 }
+        params: { filter: `storeId=${sid}`, limit: 1, offset: 0 }
       });
       const probeRows = probe.data?.rows || [];
-      console.log(`[getSlotsCurrentForAssortments] probe store=${sid}: ${probeRows.length} rows (limit=1)`);
+      console.log(`[getSlotsCurrentForAssortments] probe storeId=${sid}: ${probeRows.length} rows (limit=1)`);
     } catch (err) {
       console.error('[getSlotsCurrentForAssortments] probe failed:', err?.response?.status, err?.response?.data || err?.message || err);
     }
@@ -278,62 +277,39 @@ class MoySkladService {
       || ''
     ).trim();
 
-    const buildFilters = (chunk) => {
-      const csv = chunk.join(',');
-      const hrefs = chunk
-        .map((id) => assortmentHrefById?.get?.(id) || assortmentHrefById?.[id] || null)
-        .filter(Boolean);
-
-      const filters = [
-        `storeId=${sid};assortmentId=${csv}`,
-        `assortmentId=${csv};storeId=${sid}`,
-        `store=${storeHref};assortmentId=${csv}`,
-        `assortmentId=${csv};store=${storeHref}`,
-      ];
-
-      if (hrefs.length) {
-        const hrefCsv = hrefs.join(',');
-        filters.push(
-          `store=${storeHref};assortment=${hrefCsv}`,
-          `assortment=${hrefCsv};store=${storeHref}`,
-        );
-      }
-
-      return filters;
-    };
-
     const fetchByStoreOnly = async (chunkSet) => {
-      const storeOnlyFilters = [`storeId=${sid}`, `store=${storeHref}`];
-      for (const filter of storeOnlyFilters) {
-        try {
-          let offset = 0;
-          while (true) {
-            const resp = await this.client.get('/report/stock/byslot/current', {
-              params: { filter, limit, offset }
-            });
-            const rows = resp.data?.rows || [];
-            for (const row of rows) {
-              const aid = extractAid(row);
-              if (aid && chunkSet.has(aid)) allRows.push(row);
-            }
-            if (rows.length < limit) break;
-            offset += limit;
+      try {
+        let offset = 0;
+        while (true) {
+          const resp = await this.client.get('/report/stock/byslot/current', {
+            params: { filter: `storeId=${sid}`, limit, offset }
+          });
+          const rows = resp.data?.rows || [];
+          for (const row of rows) {
+            const aid = extractAid(row);
+            if (aid && chunkSet.has(aid)) allRows.push(row);
           }
-          return true;
-        } catch (err) {
-          console.error('[getSlotsCurrentForAssortments] store-only filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
+          if (rows.length < limit) break;
+          offset += limit;
         }
+        return true;
+      } catch (err) {
+        console.error('[getSlotsCurrentForAssortments] store-only filter failed:', `storeId=${sid}`, err?.response?.status, err?.response?.data || err?.message || err);
+        return false;
       }
-      return false;
     };
 
     for (const chunk of chunks) {
       const chunkRows = [];
+      const filters = [
+        `storeId=${sid};assortmentId=${chunk.join(',')}`,
+        `${chunk.map((id) => `storeId=${sid};assortmentId=${id}`).join(';')}`,
+      ];
 
-      for (const filter of buildFilters(chunk)) {
-        let offset = 0;
+      for (const filter of filters) {
         let gotAny = false;
         try {
+          let offset = 0;
           while (true) {
             const resp = await this.client.get('/report/stock/byslot/current', {
               params: { filter, limit, offset }
@@ -356,33 +332,15 @@ class MoySkladService {
         const viaStoreOnly = await fetchByStoreOnly(new Set(chunk));
         if (!viaStoreOnly) {
           for (const aid of chunk) {
-            const aidHref = assortmentHrefById?.get?.(aid) || assortmentHrefById?.[aid] || null;
-            const singleFilters = [
-              `storeId=${sid};assortmentId=${aid}`,
-              `assortmentId=${aid};storeId=${sid}`,
-              `store=${storeHref};assortmentId=${aid}`,
-              `assortmentId=${aid};store=${storeHref}`,
-            ];
-            if (aidHref) {
-              singleFilters.push(
-                `store=${storeHref};assortment=${aidHref}`,
-                `assortment=${aidHref};store=${storeHref}`,
-              );
-            }
-
-            for (const filter of singleFilters) {
-              try {
-                const resp = await this.client.get('/report/stock/byslot/current', {
-                  params: { filter, limit, offset: 0 }
-                });
-                const rows = resp.data?.rows || [];
-                if (rows.length > 0) {
-                  chunkRows.push(...rows);
-                  break;
-                }
-              } catch (err) {
-                console.error('[getSlotsCurrentForAssortments] single filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
-              }
+            const oneFilter = `storeId=${sid};assortmentId=${aid}`;
+            try {
+              const resp = await this.client.get('/report/stock/byslot/current', {
+                params: { filter: oneFilter, limit, offset: 0 }
+              });
+              const rows = resp.data?.rows || [];
+              if (rows.length > 0) chunkRows.push(...rows);
+            } catch (err) {
+              console.error('[getSlotsCurrentForAssortments] single filter failed:', oneFilter, err?.response?.status, err?.response?.data || err?.message || err);
             }
           }
         }
