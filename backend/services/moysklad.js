@@ -242,7 +242,7 @@ class MoySkladService {
   // Без assortmentId отчёт не работает (так устроено API), поэтому вызываем его
   // точечно — только для товаров в задаче.
   async getSlotsCurrentForAssortments(assortmentIds, storeId = null) {
-    const ids = (assortmentIds || []).map((x) => String(x).trim()).filter(Boolean);
+    const ids = (assortmentIds || []).map(String).filter(Boolean);
     if (!ids.length) return [];
 
     // Определяем склад
@@ -252,105 +252,82 @@ class MoySkladService {
       const storeHref = await this.findStoreHref(storeName);
       if (storeHref) sid = String(storeHref).split('/').pop();
     }
-    if (!sid) {
-      throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
-    }
+    if (!sid) throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
 
-    const storeHref = `${BASE_URL}/entity/store/${sid}`;
-    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 30);
-
-    const chunks = [];
-    for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize));
+    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 50);
+    const limit = 1000;
 
     const allRows = [];
-    const seen = new Set();
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      chunks.push(ids.slice(i, i + chunkSize));
+    }
 
-    const parseIdFromHref = (href) => String(href || '').split('/').pop();
-    const getAid = (row) => String(
-      row?.assortmentId
-      || row?.assortment?.id
-      || parseIdFromHref(row?.assortment?.meta?.href)
-      || parseIdFromHref(row?.meta?.href)
-      || ''
-    ).trim();
-
-    const getSlotId = (row) => String(
-      row?.slotId
-      || row?.slot?.id
-      || parseIdFromHref(row?.slot?.meta?.href)
-      || ''
-    ).trim();
-
-    const pushRows = (rows, chunkSet) => {
-      let pushed = 0;
-      for (const row of Array.isArray(rows) ? rows : []) {
-        const aid = getAid(row);
-        const slotId = getSlotId(row);
-        if (!aid || !slotId || !chunkSet.has(aid)) continue;
-
-        const qty = Number(row?.stock ?? row?.quantity ?? row?.available ?? 0) || 0;
-        const uniq = `${aid}|${slotId}|${qty}`;
-        if (seen.has(uniq)) continue;
-        seen.add(uniq);
-        allRows.push(row);
-        pushed += 1;
-      }
-      return pushed;
+    // В разных конфигурациях МойСклад может ожидаться разный порядок условий в filter.
+    const buildFilters = (chunk) => {
+      const csv = chunk.join(',');
+      return [
+        `storeId=${sid};assortmentId=${csv}`,
+        `assortmentId=${csv};storeId=${sid}`,
+      ];
     };
 
     for (const chunk of chunks) {
-      const chunkSet = new Set(chunk);
-      let gotForChunk = 0;
+      const chunkRows = [];
 
-      const idsCsv = chunk.join(',');
-      const assortmentHrefCsv = chunk.map((id) => `${BASE_URL}/entity/product/${id}`).join(',');
-      const assortmentHrefVariantCsv = chunk.map((id) => `${BASE_URL}/entity/variant/${id}`).join(',');
+      for (const filter of buildFilters(chunk)) {
+        let offset = 0;
+        let gotAny = false;
 
-      const filterCandidates = [
-        `assortmentId=${idsCsv};storeId=${sid}`,
-        `${chunk.map((id) => `assortmentId=${id}`).join(';')};storeId=${sid}`,
-        `assortmentId=${idsCsv};store=${storeHref}`,
-        `${chunk.map((id) => `assortmentId=${id}`).join(';')};store=${storeHref}`,
-        `assortment=${assortmentHrefCsv};store=${storeHref}`,
-        `assortment=${assortmentHrefVariantCsv};store=${storeHref}`,
-      ];
-
-      for (const filter of filterCandidates) {
         try {
-          const resp = await this.client.get('/report/stock/byslot/current', {
-            params: { filter, limit: 1000 }
-          });
-          const rows = resp.data?.rows || [];
-          const pushed = pushRows(rows, chunkSet);
-          gotForChunk += pushed;
-          if (pushed > 0) break;
+          while (true) {
+            const resp = await this.client.get('/report/stock/byslot/current', {
+              params: { filter, limit, offset }
+            });
+
+            const rows = resp.data?.rows || [];
+            if (rows.length > 0) {
+              chunkRows.push(...rows);
+              gotAny = true;
+            }
+
+            if (rows.length < limit) break;
+            offset += limit;
+          }
+
+          if (gotAny) break;
         } catch (err) {
-          // пробуем следующий формат
+          // пробуем альтернативный формат filter
         }
       }
 
-      if (gotForChunk === 0) {
-        // Фолбэк: запрос по одному assortmentId в двух вариантах store-параметра
+      if (chunkRows.length === 0) {
+        // Жёсткий фолбэк: по одному assortmentId (на случай странного парсинга csv фильтра)
         for (const aid of chunk) {
-          const oneByIdFilters = [
+          const singleFilters = [
+            `storeId=${sid};assortmentId=${aid}`,
             `assortmentId=${aid};storeId=${sid}`,
-            `assortmentId=${aid};store=${storeHref}`,
           ];
 
-          for (const filter of oneByIdFilters) {
+          for (const filter of singleFilters) {
             try {
               const resp = await this.client.get('/report/stock/byslot/current', {
-                params: { filter, limit: 1000 }
+                params: { filter, limit, offset: 0 }
               });
               const rows = resp.data?.rows || [];
-              const pushed = pushRows(rows, chunkSet);
-              if (pushed > 0) break;
+              if (rows.length > 0) {
+                chunkRows.push(...rows);
+                break;
+              }
             } catch (err) {
-              // continue
+              // пробуем следующий filter
             }
           }
         }
       }
+
+      // Возвращаем как есть; разбор id/qty делается в routes/products.js
+      allRows.push(...chunkRows);
     }
 
     return allRows;
