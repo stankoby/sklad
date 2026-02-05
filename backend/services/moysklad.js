@@ -241,7 +241,7 @@ class MoySkladService {
   //   GET /report/stock/byslot/current?filter=assortmentId=<uuid,uuid>;storeId=<uuid>
   // Без assortmentId отчёт не работает (так устроено API), поэтому вызываем его
   // точечно — только для товаров в задаче.
-  async getSlotsCurrentForAssortments(assortmentIds, storeId = null) {
+  async getSlotsCurrentForAssortments(assortmentIds, storeId = null, assortmentHrefById = null) {
     const ids = (assortmentIds || []).map(String).filter(Boolean);
     if (!ids.length) return [];
 
@@ -256,20 +256,50 @@ class MoySkladService {
 
     const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 50);
     const limit = 1000;
+    const storeHref = `${BASE_URL}/entity/store/${sid}`;
 
     const allRows = [];
     const chunks = [];
+
+    // Диагностика: проверяем, возвращает ли byslot/current хоть что-то без фильтра по ассортименту.
+    // Если здесь 0, проблема, вероятно, не в фильтре, а в данных/настройках адресного хранения.
+    try {
+      const probe = await this.client.get('/report/stock/byslot/current', {
+        params: { filter: `store=${storeHref}`, limit: 1, offset: 0 }
+      });
+      const probeRows = probe.data?.rows || [];
+      console.log(`[getSlotsCurrentForAssortments] probe store=${sid}: ${probeRows.length} rows (limit=1)`);
+    } catch (e) {
+      console.log(`[getSlotsCurrentForAssortments] probe failed: ${e?.message || e}`);
+    }
     for (let i = 0; i < ids.length; i += chunkSize) {
       chunks.push(ids.slice(i, i + chunkSize));
     }
 
-    // В разных конфигурациях МойСклад может ожидаться разный порядок условий в filter.
+    // В разных конфигурациях МойСклад могут отличаться названия/формат полей filter.
+    // Пробуем набор совместимых вариантов: storeId/store + assortmentId/assortment(href).
     const buildFilters = (chunk) => {
       const csv = chunk.join(',');
-      return [
+      const hrefs = chunk
+        .map((id) => assortmentHrefById?.get?.(id) || assortmentHrefById?.[id] || null)
+        .filter(Boolean);
+
+      const filters = [
         `storeId=${sid};assortmentId=${csv}`,
         `assortmentId=${csv};storeId=${sid}`,
+        `store=${storeHref};assortmentId=${csv}`,
+        `assortmentId=${csv};store=${storeHref}`,
       ];
+
+      if (hrefs.length) {
+        const hrefCsv = hrefs.join(',');
+        filters.push(
+          `store=${storeHref};assortment=${hrefCsv}`,
+          `assortment=${hrefCsv};store=${storeHref}`,
+        );
+      }
+
+      return filters;
     };
 
     for (const chunk of chunks) {
@@ -304,10 +334,19 @@ class MoySkladService {
       if (chunkRows.length === 0) {
         // Жёсткий фолбэк: по одному assortmentId (на случай странного парсинга csv фильтра)
         for (const aid of chunk) {
+          const aidHref = assortmentHrefById?.get?.(aid) || assortmentHrefById?.[aid] || null;
           const singleFilters = [
             `storeId=${sid};assortmentId=${aid}`,
             `assortmentId=${aid};storeId=${sid}`,
+            `store=${storeHref};assortmentId=${aid}`,
+            `assortmentId=${aid};store=${storeHref}`,
           ];
+          if (aidHref) {
+            singleFilters.push(
+              `store=${storeHref};assortment=${aidHref}`,
+              `assortment=${aidHref};store=${storeHref}`,
+            );
+          }
 
           for (const filter of singleFilters) {
             try {

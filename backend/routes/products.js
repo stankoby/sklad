@@ -319,6 +319,13 @@ router.post('/sync', async (req, res) => {
         }
 
         const ids = products.map((p) => String(p.id)).filter(Boolean);
+        const assortmentHrefById = new Map();
+        for (const p of products) {
+          const pid = String(p?.id || '').trim();
+          if (!pid) continue;
+          const href = p?.meta?.href || p?.product?.meta?.href || null;
+          if (href) assortmentHrefById.set(pid, href);
+        }
         console.log(`[sync] Обрабатываем ${ids.length} товаров`);
         
         const chunkSize = 200;
@@ -327,7 +334,7 @@ router.post('/sync', async (req, res) => {
 
         for (let i = 0; i < ids.length; i += chunkSize) {
           const chunk = ids.slice(i, i + chunkSize);
-          const rows = await moysklad.getSlotsCurrentForAssortments(chunk, storeId);
+          const rows = await moysklad.getSlotsCurrentForAssortments(chunk, storeId, assortmentHrefById);
           const fetched = rows?.length || 0;
           slotRowsFetched += fetched;
           console.log(`[sync] getSlotsCurrentForAssortments chunk ${i}-${i+chunk.length}: вернул ${fetched} записей`);
