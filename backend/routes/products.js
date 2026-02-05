@@ -318,37 +318,30 @@ router.post('/sync', async (req, res) => {
         }
         console.log(`[sync] Обрабатываем ${ids.length} товаров`);
         
-        const chunkSize = 200;
         const bestSlotByAssortment = new Map();
-        let slotRowsFetched = 0;
+        const rows = await moysklad.getSlotsCurrentForAssortments(ids, storeId, assortmentHrefById);
+        const slotRowsFetched = rows?.length || 0;
+        console.log(`[sync] getSlotsCurrentForAssortments: вернул ${slotRowsFetched} записей`);
 
-        for (let i = 0; i < ids.length; i += chunkSize) {
-          const chunk = ids.slice(i, i + chunkSize);
-          const rows = await moysklad.getSlotsCurrentForAssortments(chunk, storeId, assortmentHrefById);
-          const fetched = rows?.length || 0;
-          slotRowsFetched += fetched;
-          console.log(`[sync] getSlotsCurrentForAssortments chunk ${i}-${i+chunk.length}: вернул ${fetched} записей`);
-          
-          for (const r of Array.isArray(rows) ? rows : []) {
-            const aid = String(
-              r?.assortmentId
-              || r?.assortment?.id
-              || r?.assortment?.meta?.href?.split('/').pop()
-              || ''
-            ).trim();
-            const slotId = String(
-              r?.slotId
-              || r?.slot?.id
-              || r?.slot?.meta?.href?.split('/').pop()
-              || ''
-            ).trim();
-            const qty = Number(r?.stock ?? r?.quantity ?? r?.available ?? 0) || 0;
-            // byslot/current может возвращать строки с нулевым остатком.
-            // Такие слоты не должны попадать в маршрутный лист, иначе будут «призраки» старых ячеек.
-            if (!aid || !slotId || qty <= 0) continue;
-            const cur = bestSlotByAssortment.get(aid);
-            if (!cur || qty > cur.qty) bestSlotByAssortment.set(aid, { slotId, qty });
-          }
+        for (const r of Array.isArray(rows) ? rows : []) {
+          const aid = String(
+            r?.assortmentId
+            || r?.assortment?.id
+            || r?.assortment?.meta?.href?.split('/').pop()
+            || ''
+          ).trim();
+          const slotId = String(
+            r?.slotId
+            || r?.slot?.id
+            || r?.slot?.meta?.href?.split('/').pop()
+            || ''
+          ).trim();
+          const qty = Number(r?.stock ?? r?.quantity ?? r?.available ?? 0) || 0;
+          // byslot/current может возвращать строки с нулевым остатком.
+          // Такие слоты не должны попадать в маршрутный лист, иначе будут «призраки» старых ячеек.
+          if (!aid || !slotId || qty <= 0) continue;
+          const cur = bestSlotByAssortment.get(aid);
+          if (!cur || qty > cur.qty) bestSlotByAssortment.set(aid, { slotId, qty });
         }
         
         console.log(`[sync] Найдено ${bestSlotByAssortment.size} товаров с привязкой к ячейкам`);
