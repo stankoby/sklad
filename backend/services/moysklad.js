@@ -242,7 +242,7 @@ class MoySkladService {
   // Без assortmentId отчёт не работает (так устроено API), поэтому вызываем его
   // точечно — только для товаров в задаче.
   async getSlotsCurrentForAssortments(assortmentIds, storeId = null) {
-    const ids = (assortmentIds || []).map(String).filter(Boolean);
+    const ids = (assortmentIds || []).map((x) => String(x).trim()).filter(Boolean);
     if (!ids.length) return [];
 
     // Определяем склад
@@ -258,8 +258,6 @@ class MoySkladService {
       throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
     }
 
-    // В МойСклад есть лимиты по длине URL и rate limit.
-    // Бьём список товаров на чанки.
     const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 50);
     const chunks = [];
     for (let i = 0; i < ids.length; i += chunkSize) {
@@ -267,44 +265,77 @@ class MoySkladService {
     }
 
     const allRows = [];
+    const seen = new Set();
+
+    const pushRows = (rows, chunkSet) => {
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const aid = String(
+          row?.assortmentId
+          || row?.assortment?.id
+          || row?.assortment?.meta?.href?.split('/').pop()
+          || ''
+        ).trim();
+        const slotId = String(
+          row?.slotId
+          || row?.slot?.id
+          || row?.slot?.meta?.href?.split('/').pop()
+          || ''
+        ).trim();
+
+        if (!aid || !slotId || !chunkSet.has(aid)) continue;
+
+        const uniq = `${aid}|${slotId}|${Number(row?.stock ?? row?.quantity ?? row?.available ?? 0) || 0}`;
+        if (seen.has(uniq)) continue;
+        seen.add(uniq);
+        allRows.push(row);
+      }
+    };
+
     for (const chunk of chunks) {
-      try {
-        // byslot/current в большинстве аккаунтов требует assortmentId в фильтре.
-        // Без него API часто возвращает 0 строк.
-        const idsFilter = chunk.join(',');
-        const filter = `assortmentId=${idsFilter};storeId=${sid}`;
-        const resp = await this.client.get('/report/stock/byslot/current', {
-          params: {
-            filter,
-            limit: 1000,
-          }
-        });
-        const rows = resp.data?.rows || [];
+      const chunkSet = new Set(chunk);
+      let success = false;
 
-        const chunkSet = new Set(chunk.map(String));
-        for (const row of rows) {
-          const aid = String(
-            row?.assortmentId
-            || row?.assortment?.id
-            || row?.assortment?.meta?.href?.split('/').pop()
-            || ''
-          ).trim();
+      // Пробуем несколько форматов filter, т.к. в разных аккаунтах МойСклад
+      // сервер по-разному интерпретирует список assortmentId.
+      const filterCandidates = [
+        `assortmentId=${chunk.join(',')};storeId=${sid}`,
+        `${chunk.map((id) => `assortmentId=${id}`).join(';')};storeId=${sid}`,
+      ];
 
-          if (aid && chunkSet.has(aid)) {
-            allRows.push(row);
+      for (const filter of filterCandidates) {
+        try {
+          const resp = await this.client.get('/report/stock/byslot/current', {
+            params: { filter, limit: 1000 }
+          });
+          const rows = resp.data?.rows || [];
+          pushRows(rows, chunkSet);
+          success = true;
+          if (rows.length > 0) break;
+        } catch (err) {
+          // пробуем следующий формат
+        }
+      }
+
+      // Последний фолбэк: точечно по каждому ассортименту
+      // (медленнее, но надёжно если массовый filter в аккаунте не работает)
+      if (!success) {
+        for (const aid of chunk) {
+          try {
+            const resp = await this.client.get('/report/stock/byslot/current', {
+              params: { filter: `assortmentId=${aid};storeId=${sid}`, limit: 1000 }
+            });
+            const rows = resp.data?.rows || [];
+            pushRows(rows, chunkSet);
+          } catch (err) {
+            console.error(`[getSlotsCurrentForAssortments] Ошибка assortmentId=${aid}: ${err.message}`);
           }
         }
-
-        if (rows.length > 0 && allRows.length === 0) {
-          console.log(`[getSlotsCurrentForAssortments] API вернул ${rows.length} записей, но не удалось сопоставить assortmentId`);
-          console.log(`[getSlotsCurrentForAssortments] Пример записи:`, JSON.stringify(rows[0]).substring(0, 300));
-        }
-      } catch (err) {
-        console.error(`[getSlotsCurrentForAssortments] Ошибка для chunk ${chunk[0]}..${chunk[chunk.length - 1]}: ${err.message}`);
       }
     }
+
     return allRows;
   }
+
 
   // Получить все ячейки (slots) выбранного склада.
   // Важно: тип slot в API не доступен по /entity/slot, только через /entity/store/{storeId}/slots.

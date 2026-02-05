@@ -323,8 +323,13 @@ router.post('/sync', async (req, res) => {
               || r?.assortment?.meta?.href?.split('/').pop()
               || ''
             ).trim();
-            const slotId = String(r.slotId || '').trim();
-            const qty = Number(r.stock || 0) || 0;
+            const slotId = String(
+              r?.slotId
+              || r?.slot?.id
+              || r?.slot?.meta?.href?.split('/').pop()
+              || ''
+            ).trim();
+            const qty = Number(r?.stock ?? r?.quantity ?? r?.available ?? 0) || 0;
             // byslot/current может возвращать строки с нулевым остатком.
             // Такие слоты не должны попадать в маршрутный лист, иначе будут «призраки» старых ячеек.
             if (!aid || !slotId || qty <= 0) continue;
