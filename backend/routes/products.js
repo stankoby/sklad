@@ -276,8 +276,24 @@ router.post('/sync', async (req, res) => {
     }
 
     try {
-      const storeId = await moysklad.storeId();
-      console.log(`[sync] storeId: ${storeId}`);
+      // Источник склада для sync ячеек:
+      // 1) app_settings.moysklad_store_id (выбор в UI)
+      // 2) env (MOYSKLAD_STORE_ID / MOYSKLAD_STORE_NAME через сервис)
+      let storeId = null;
+      try {
+        const storeSetting = db.prepare(`SELECT value FROM app_settings WHERE key = 'moysklad_store_id'`).get();
+        if (storeSetting?.value) {
+          storeId = String(storeSetting.value).trim();
+          console.log(`[sync] storeId из app_settings: ${storeId}`);
+        }
+      } catch (e) {
+        // app_settings может отсутствовать в старых БД
+      }
+
+      if (!storeId) {
+        storeId = await moysklad.storeId();
+        console.log(`[sync] storeId из env/service: ${storeId}`);
+      }
       
       if (storeId) {
         const slots = await moysklad.getAllStoreSlots(storeId);
@@ -356,6 +372,8 @@ router.post('/sync', async (req, res) => {
           console.warn('[sync] byslot/current вернул 0 строк. Сохраняем предыдущие ячейки из БД (fallback), чтобы не затирать адреса.');
         }
         console.log(`[sync] Привязано ${cellById.size} товаров к ячейкам`);
+      } else {
+        console.warn('[sync] storeId не определён (ни app_settings, ни env). Обновление ячеек пропущено, остаются старые значения из БД.');
         
         // Показываем первые 3 привязки для отладки
         let bindCount = 0;
