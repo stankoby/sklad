@@ -317,7 +317,12 @@ router.post('/sync', async (req, res) => {
           console.log(`[sync] getSlotsCurrentForAssortments chunk ${i}-${i+chunk.length}: вернул ${fetched} записей`);
           
           for (const r of Array.isArray(rows) ? rows : []) {
-            const aid = String(r.assortmentId || '').trim();
+            const aid = String(
+              r?.assortmentId
+              || r?.assortment?.id
+              || r?.assortment?.meta?.href?.split('/').pop()
+              || ''
+            ).trim();
             const slotId = String(r.slotId || '').trim();
             const qty = Number(r.stock || 0) || 0;
             // byslot/current может возвращать строки с нулевым остатком.
