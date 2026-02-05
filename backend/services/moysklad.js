@@ -250,56 +250,69 @@ class MoySkladService {
     if (!sid) {
       const storeName = (process.env.MOYSKLAD_STORE_NAME || 'Склад хранения.').trim();
       const storeHref = await this.findStoreHref(storeName);
-      if (storeHref) {
-        sid = String(storeHref).split('/').pop();
-      }
+      if (storeHref) sid = String(storeHref).split('/').pop();
     }
     if (!sid) {
       throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
     }
 
-    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 50);
+    const storeHref = `${BASE_URL}/entity/store/${sid}`;
+    const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 30);
+
     const chunks = [];
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      chunks.push(ids.slice(i, i + chunkSize));
-    }
+    for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize));
 
     const allRows = [];
     const seen = new Set();
 
-    const pushRows = (rows, chunkSet) => {
-      for (const row of Array.isArray(rows) ? rows : []) {
-        const aid = String(
-          row?.assortmentId
-          || row?.assortment?.id
-          || row?.assortment?.meta?.href?.split('/').pop()
-          || ''
-        ).trim();
-        const slotId = String(
-          row?.slotId
-          || row?.slot?.id
-          || row?.slot?.meta?.href?.split('/').pop()
-          || ''
-        ).trim();
+    const parseIdFromHref = (href) => String(href || '').split('/').pop();
+    const getAid = (row) => String(
+      row?.assortmentId
+      || row?.assortment?.id
+      || parseIdFromHref(row?.assortment?.meta?.href)
+      || parseIdFromHref(row?.meta?.href)
+      || ''
+    ).trim();
 
+    const getSlotId = (row) => String(
+      row?.slotId
+      || row?.slot?.id
+      || parseIdFromHref(row?.slot?.meta?.href)
+      || ''
+    ).trim();
+
+    const pushRows = (rows, chunkSet) => {
+      let pushed = 0;
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const aid = getAid(row);
+        const slotId = getSlotId(row);
         if (!aid || !slotId || !chunkSet.has(aid)) continue;
 
-        const uniq = `${aid}|${slotId}|${Number(row?.stock ?? row?.quantity ?? row?.available ?? 0) || 0}`;
+        const qty = Number(row?.stock ?? row?.quantity ?? row?.available ?? 0) || 0;
+        const uniq = `${aid}|${slotId}|${qty}`;
         if (seen.has(uniq)) continue;
         seen.add(uniq);
         allRows.push(row);
+        pushed += 1;
       }
+      return pushed;
     };
 
     for (const chunk of chunks) {
       const chunkSet = new Set(chunk);
-      let success = false;
+      let gotForChunk = 0;
 
-      // Пробуем несколько форматов filter, т.к. в разных аккаунтах МойСклад
-      // сервер по-разному интерпретирует список assortmentId.
+      const idsCsv = chunk.join(',');
+      const assortmentHrefCsv = chunk.map((id) => `${BASE_URL}/entity/product/${id}`).join(',');
+      const assortmentHrefVariantCsv = chunk.map((id) => `${BASE_URL}/entity/variant/${id}`).join(',');
+
       const filterCandidates = [
-        `assortmentId=${chunk.join(',')};storeId=${sid}`,
+        `assortmentId=${idsCsv};storeId=${sid}`,
         `${chunk.map((id) => `assortmentId=${id}`).join(';')};storeId=${sid}`,
+        `assortmentId=${idsCsv};store=${storeHref}`,
+        `${chunk.map((id) => `assortmentId=${id}`).join(';')};store=${storeHref}`,
+        `assortment=${assortmentHrefCsv};store=${storeHref}`,
+        `assortment=${assortmentHrefVariantCsv};store=${storeHref}`,
       ];
 
       for (const filter of filterCandidates) {
@@ -308,26 +321,33 @@ class MoySkladService {
             params: { filter, limit: 1000 }
           });
           const rows = resp.data?.rows || [];
-          pushRows(rows, chunkSet);
-          success = true;
-          if (rows.length > 0) break;
+          const pushed = pushRows(rows, chunkSet);
+          gotForChunk += pushed;
+          if (pushed > 0) break;
         } catch (err) {
           // пробуем следующий формат
         }
       }
 
-      // Последний фолбэк: точечно по каждому ассортименту
-      // (медленнее, но надёжно если массовый filter в аккаунте не работает)
-      if (!success) {
+      if (gotForChunk === 0) {
+        // Фолбэк: запрос по одному assortmentId в двух вариантах store-параметра
         for (const aid of chunk) {
-          try {
-            const resp = await this.client.get('/report/stock/byslot/current', {
-              params: { filter: `assortmentId=${aid};storeId=${sid}`, limit: 1000 }
-            });
-            const rows = resp.data?.rows || [];
-            pushRows(rows, chunkSet);
-          } catch (err) {
-            console.error(`[getSlotsCurrentForAssortments] Ошибка assortmentId=${aid}: ${err.message}`);
+          const oneByIdFilters = [
+            `assortmentId=${aid};storeId=${sid}`,
+            `assortmentId=${aid};store=${storeHref}`,
+          ];
+
+          for (const filter of oneByIdFilters) {
+            try {
+              const resp = await this.client.get('/report/stock/byslot/current', {
+                params: { filter, limit: 1000 }
+              });
+              const rows = resp.data?.rows || [];
+              const pushed = pushRows(rows, chunkSet);
+              if (pushed > 0) break;
+            } catch (err) {
+              // continue
+            }
           }
         }
       }
