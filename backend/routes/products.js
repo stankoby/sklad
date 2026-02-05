@@ -363,14 +363,11 @@ router.post('/sync', async (req, res) => {
             slotId: slotId  // Сохраняем slotId для использования в API
           });
         }
-        if (slotRowsFetched > 0) {
-        } else {
-          console.warn('[sync] byslot/current вернул 0 строк. Сохраняем предыдущие ячейки из БД (fallback), чтобы не затирать адреса.');
+        if (slotRowsFetched === 0) {
+          console.warn('[sync] byslot отчёт не вернул строк для выбранного склада/товаров. Ячейки будут очищены до следующей успешной синхронизации.');
         }
         console.log(`[sync] Привязано ${cellById.size} товаров к ячейкам`);
-      } else {
-        console.warn('[sync] storeId не определён (ни app_settings, ни env). Обновление ячеек пропущено, остаются старые значения из БД.');
-        
+
         // Показываем первые 3 привязки для отладки
         let bindCount = 0;
         for (const [aid, info] of cellById) {
@@ -378,6 +375,8 @@ router.post('/sync', async (req, res) => {
             console.log(`[sync]   Товар ${aid.substring(0, 8)}... -> ${info.cell} (slot: ${info.slotId?.substring(0, 8)}...)`);
           }
         }
+      } else {
+        console.warn('[sync] storeId не определён (ни app_settings, ни env). Обновление ячеек пропущено.');
       }
     } catch (e) {
       console.warn('[sync] slots update skipped:', e?.message || e);

@@ -255,20 +255,11 @@ class MoySkladService {
 
     const chunkSize = Number(process.env.MOYSKLAD_SLOT_CHUNK_SIZE || 20);
     const limit = 1000;
+    const endpoints = ['/report/stock/byslot/current', '/report/stock/byslot/all'];
 
     const allRows = [];
     const chunks = [];
     for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize));
-
-    try {
-      const probe = await this.client.get('/report/stock/byslot/current', {
-        params: { filter: `storeId=${sid}`, limit: 1, offset: 0 }
-      });
-      const probeRows = probe.data?.rows || [];
-      console.log(`[getSlotsCurrentForAssortments] probe storeId=${sid}: ${probeRows.length} rows (limit=1)`);
-    } catch (err) {
-      console.error('[getSlotsCurrentForAssortments] probe failed:', err?.response?.status, err?.response?.data || err?.message || err);
-    }
 
     const extractAid = (row) => String(
       row?.assortmentId
@@ -277,27 +268,51 @@ class MoySkladService {
       || ''
     ).trim();
 
+    const fetchPaged = async (endpoint, filter) => {
+      const out = [];
+      let offset = 0;
+      while (true) {
+        const resp = await this.client.get(endpoint, { params: { filter, limit, offset } });
+        const rows = resp.data?.rows || [];
+        out.push(...rows);
+        if (rows.length < limit) break;
+        offset += limit;
+      }
+      return out;
+    };
+
     const fetchByStoreOnly = async (chunkSet) => {
-      try {
-        let offset = 0;
-        while (true) {
-          const resp = await this.client.get('/report/stock/byslot/current', {
-            params: { filter: `storeId=${sid}`, limit, offset }
-          });
-          const rows = resp.data?.rows || [];
+      for (const endpoint of endpoints) {
+        try {
+          const rows = await fetchPaged(endpoint, `storeId=${sid}`);
           for (const row of rows) {
             const aid = extractAid(row);
             if (aid && chunkSet.has(aid)) allRows.push(row);
           }
-          if (rows.length < limit) break;
-          offset += limit;
+          if (rows.length > 0) {
+            console.log(`[getSlotsCurrentForAssortments] store-only fallback used ${endpoint}, rows=${rows.length}`);
+            return true;
+          }
+        } catch (err) {
+          console.error('[getSlotsCurrentForAssortments] store-only filter failed:', endpoint, err?.response?.status, err?.response?.data || err?.message || err);
         }
-        return true;
-      } catch (err) {
-        console.error('[getSlotsCurrentForAssortments] store-only filter failed:', `storeId=${sid}`, err?.response?.status, err?.response?.data || err?.message || err);
-        return false;
       }
+      return false;
     };
+
+    // probe once
+    for (const endpoint of endpoints) {
+      try {
+        const probe = await this.client.get(endpoint, {
+          params: { filter: `storeId=${sid}`, limit: 1, offset: 0 }
+        });
+        const probeRows = probe.data?.rows || [];
+        console.log(`[getSlotsCurrentForAssortments] probe ${endpoint} storeId=${sid}: ${probeRows.length} rows (limit=1)`);
+        if (probeRows.length > 0) break;
+      } catch (err) {
+        console.error('[getSlotsCurrentForAssortments] probe failed:', endpoint, err?.response?.status, err?.response?.data || err?.message || err);
+      }
+    }
 
     for (const chunk of chunks) {
       const chunkRows = [];
@@ -306,26 +321,21 @@ class MoySkladService {
         `${chunk.map((id) => `storeId=${sid};assortmentId=${id}`).join(';')}`,
       ];
 
-      for (const filter of filters) {
+      for (const endpoint of endpoints) {
         let gotAny = false;
-        try {
-          let offset = 0;
-          while (true) {
-            const resp = await this.client.get('/report/stock/byslot/current', {
-              params: { filter, limit, offset }
-            });
-            const rows = resp.data?.rows || [];
+        for (const filter of filters) {
+          try {
+            const rows = await fetchPaged(endpoint, filter);
             if (rows.length > 0) {
               chunkRows.push(...rows);
               gotAny = true;
+              break;
             }
-            if (rows.length < limit) break;
-            offset += limit;
+          } catch (err) {
+            console.error('[getSlotsCurrentForAssortments] filter failed:', endpoint, filter, err?.response?.status, err?.response?.data || err?.message || err);
           }
-          if (gotAny) break;
-        } catch (err) {
-          console.error('[getSlotsCurrentForAssortments] filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
         }
+        if (gotAny) break;
       }
 
       if (chunkRows.length === 0) {
@@ -333,14 +343,16 @@ class MoySkladService {
         if (!viaStoreOnly) {
           for (const aid of chunk) {
             const oneFilter = `storeId=${sid};assortmentId=${aid}`;
-            try {
-              const resp = await this.client.get('/report/stock/byslot/current', {
-                params: { filter: oneFilter, limit, offset: 0 }
-              });
-              const rows = resp.data?.rows || [];
-              if (rows.length > 0) chunkRows.push(...rows);
-            } catch (err) {
-              console.error('[getSlotsCurrentForAssortments] single filter failed:', oneFilter, err?.response?.status, err?.response?.data || err?.message || err);
+            for (const endpoint of endpoints) {
+              try {
+                const rows = await fetchPaged(endpoint, oneFilter);
+                if (rows.length > 0) {
+                  chunkRows.push(...rows);
+                  break;
+                }
+              } catch (err) {
+                console.error('[getSlotsCurrentForAssortments] single filter failed:', endpoint, oneFilter, err?.response?.status, err?.response?.data || err?.message || err);
+              }
             }
           }
         }
