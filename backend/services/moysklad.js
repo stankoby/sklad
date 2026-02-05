@@ -281,23 +281,6 @@ class MoySkladService {
       return out;
     };
 
-    const fetchByStoreOnly = async (chunkSet) => {
-      try {
-        const rows = await fetchPaged(`storeId=${sid}`);
-        for (const row of rows) {
-          const aid = extractAid(row);
-          if (aid && chunkSet.has(aid)) allRows.push(row);
-        }
-        if (rows.length > 0) {
-          console.log(`[getSlotsCurrentForAssortments] store-only fallback used ${endpoint}, rows=${rows.length}`);
-          return true;
-        }
-      } catch (err) {
-        console.error('[getSlotsCurrentForAssortments] store-only filter failed:', endpoint, err?.response?.status, err?.response?.data || err?.message || err);
-      }
-      return false;
-    };
-
     // probe once
     try {
       const probe = await this.client.get(endpoint, {
@@ -305,6 +288,11 @@ class MoySkladService {
       });
       const probeRows = probe.data?.rows || [];
       console.log(`[getSlotsCurrentForAssortments] probe ${endpoint} storeId=${sid}: ${probeRows.length} rows (limit=1)`);
+
+      if (probeRows.length === 0) {
+        console.warn('[getSlotsCurrentForAssortments] byslot/current пустой по storeId. Вероятно, в МойСклад нет данных остатков по ячейкам для этого склада.');
+        return [];
+      }
     } catch (err) {
       console.error('[getSlotsCurrentForAssortments] probe failed:', endpoint, err?.response?.status, err?.response?.data || err?.message || err);
     }
@@ -329,18 +317,15 @@ class MoySkladService {
       }
 
       if (chunkRows.length === 0) {
-        const viaStoreOnly = await fetchByStoreOnly(new Set(chunk));
-        if (!viaStoreOnly) {
-          for (const aid of chunk) {
-            const oneFilter = `storeId=${sid};assortmentId=${aid}`;
-            try {
-              const rows = await fetchPaged(oneFilter);
-              if (rows.length > 0) {
-                chunkRows.push(...rows);
-              }
-            } catch (err) {
-              console.error('[getSlotsCurrentForAssortments] single filter failed:', endpoint, oneFilter, err?.response?.status, err?.response?.data || err?.message || err);
+        for (const aid of chunk) {
+          const oneFilter = `storeId=${sid};assortmentId=${aid}`;
+          try {
+            const rows = await fetchPaged(oneFilter);
+            if (rows.length > 0) {
+              chunkRows.push(...rows);
             }
+          } catch (err) {
+            console.error('[getSlotsCurrentForAssortments] single filter failed:', endpoint, oneFilter, err?.response?.status, err?.response?.data || err?.message || err);
           }
         }
       }
