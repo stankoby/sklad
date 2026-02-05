@@ -317,7 +317,9 @@ router.post('/sync', async (req, res) => {
             const aid = String(r.assortmentId || '').trim();
             const slotId = String(r.slotId || '').trim();
             const qty = Number(r.stock || 0) || 0;
-            if (!aid || !slotId) continue;
+            // byslot/current может возвращать строки с нулевым остатком.
+            // Такие слоты не должны попадать в маршрутный лист, иначе будут «призраки» старых ячеек.
+            if (!aid || !slotId || qty <= 0) continue;
             const cur = bestSlotByAssortment.get(aid);
             if (!cur || qty > cur.qty) bestSlotByAssortment.set(aid, { slotId, qty });
           }
