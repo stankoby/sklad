@@ -264,16 +264,6 @@ router.post('/sync', async (req, res) => {
     // 3) выбираем слот с максимальным stock как основной адрес товара
     // Если что-то падает — не ломаем sync, просто оставляем старые cell_address.
     const cellById = new Map();
-    let slotsSyncCompleted = false;
-    const existingCellById = new Map();
-    try {
-      const rows = db.prepare('SELECT id, cell_address, slot_id FROM products').all();
-      for (const r of rows) {
-        if (r?.id) existingCellById.set(String(r.id), { cell_address: r.cell_address || null, slot_id: r.slot_id || null });
-      }
-    } catch (e) {
-      // ignore
-    }
 
     try {
       // Источник склада для sync ячеек:
@@ -374,7 +364,6 @@ router.post('/sync', async (req, res) => {
           });
         }
         if (slotRowsFetched > 0) {
-          slotsSyncCompleted = true;
         } else {
           console.warn('[sync] byslot/current вернул 0 строк. Сохраняем предыдущие ячейки из БД (fallback), чтобы не затирать адреса.');
         }
@@ -571,13 +560,8 @@ router.post('/sync', async (req, res) => {
 
       // Адрес ячейки (из отчёта остатков по ячейкам). Берём наиболее "значимую" ячейку (с максимальным qty).
       const cellInfo = cellById.get(id);
-      const existingInfo = existingCellById.get(id);
-      const cellAddress = slotsSyncCompleted
-        ? (cellInfo?.cell ?? null)
-        : (cellInfo?.cell ?? existingInfo?.cell_address ?? null);
-      const slotId = slotsSyncCompleted
-        ? (cellInfo?.slotId ?? null)
-        : (cellInfo?.slotId ?? existingInfo?.slot_id ?? null);
+      const cellAddress = cellInfo?.cell ?? null;
+      const slotId = cellInfo?.slotId ?? null;
 
       // Остаток: пытаемся матчить по id ассортимента (надежно), затем по любому штрихкоду (товар/упаковки),
       // затем по артикулу/коду. Это критично, т.к. в Excel часто лежит штрихкод упаковки, а в отчёте — базовый.

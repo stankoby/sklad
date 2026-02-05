@@ -245,12 +245,11 @@ class MoySkladService {
     const ids = (assortmentIds || []).map(String).filter(Boolean);
     if (!ids.length) return [];
 
-    // Определяем склад
     let sid = storeId ? String(storeId).trim() : '';
     if (!sid) {
       const storeName = (process.env.MOYSKLAD_STORE_NAME || 'Склад хранения.').trim();
-      const storeHref = await this.findStoreHref(storeName);
-      if (storeHref) sid = String(storeHref).split('/').pop();
+      const storeHrefByName = await this.findStoreHref(storeName);
+      if (storeHrefByName) sid = String(storeHrefByName).split('/').pop();
     }
     if (!sid) throw new Error('Не удалось определить storeId. Укажите MOYSKLAD_STORE_NAME или MOYSKLAD_STORE_ID');
 
@@ -260,24 +259,25 @@ class MoySkladService {
 
     const allRows = [];
     const chunks = [];
+    for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize));
 
-    // Диагностика: проверяем, возвращает ли byslot/current хоть что-то без фильтра по ассортименту.
-    // Если здесь 0, проблема, вероятно, не в фильтре, а в данных/настройках адресного хранения.
     try {
       const probe = await this.client.get('/report/stock/byslot/current', {
         params: { filter: `store=${storeHref}`, limit: 1, offset: 0 }
       });
       const probeRows = probe.data?.rows || [];
       console.log(`[getSlotsCurrentForAssortments] probe store=${sid}: ${probeRows.length} rows (limit=1)`);
-    } catch (e) {
-      console.log(`[getSlotsCurrentForAssortments] probe failed: ${e?.message || e}`);
-    }
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      chunks.push(ids.slice(i, i + chunkSize));
+    } catch (err) {
+      console.error('[getSlotsCurrentForAssortments] probe failed:', err?.response?.status, err?.response?.data || err?.message || err);
     }
 
-    // В разных конфигурациях МойСклад могут отличаться названия/формат полей filter.
-    // Пробуем набор совместимых вариантов: storeId/store + assortmentId/assortment(href).
+    const extractAid = (row) => String(
+      row?.assortmentId
+      || row?.assortment?.id
+      || row?.assortment?.meta?.href?.split('/').pop()
+      || ''
+    ).trim();
+
     const buildFilters = (chunk) => {
       const csv = chunk.join(',');
       const hrefs = chunk
@@ -302,75 +302,98 @@ class MoySkladService {
       return filters;
     };
 
+    const fetchByStoreOnly = async (chunkSet) => {
+      const storeOnlyFilters = [`storeId=${sid}`, `store=${storeHref}`];
+      for (const filter of storeOnlyFilters) {
+        try {
+          let offset = 0;
+          while (true) {
+            const resp = await this.client.get('/report/stock/byslot/current', {
+              params: { filter, limit, offset }
+            });
+            const rows = resp.data?.rows || [];
+            for (const row of rows) {
+              const aid = extractAid(row);
+              if (aid && chunkSet.has(aid)) allRows.push(row);
+            }
+            if (rows.length < limit) break;
+            offset += limit;
+          }
+          return true;
+        } catch (err) {
+          console.error('[getSlotsCurrentForAssortments] store-only filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
+        }
+      }
+      return false;
+    };
+
     for (const chunk of chunks) {
       const chunkRows = [];
 
       for (const filter of buildFilters(chunk)) {
         let offset = 0;
         let gotAny = false;
-
         try {
           while (true) {
             const resp = await this.client.get('/report/stock/byslot/current', {
               params: { filter, limit, offset }
             });
-
             const rows = resp.data?.rows || [];
             if (rows.length > 0) {
               chunkRows.push(...rows);
               gotAny = true;
             }
-
             if (rows.length < limit) break;
             offset += limit;
           }
-
           if (gotAny) break;
         } catch (err) {
-          // пробуем альтернативный формат filter
+          console.error('[getSlotsCurrentForAssortments] filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
         }
       }
 
       if (chunkRows.length === 0) {
-        // Жёсткий фолбэк: по одному assortmentId (на случай странного парсинга csv фильтра)
-        for (const aid of chunk) {
-          const aidHref = assortmentHrefById?.get?.(aid) || assortmentHrefById?.[aid] || null;
-          const singleFilters = [
-            `storeId=${sid};assortmentId=${aid}`,
-            `assortmentId=${aid};storeId=${sid}`,
-            `store=${storeHref};assortmentId=${aid}`,
-            `assortmentId=${aid};store=${storeHref}`,
-          ];
-          if (aidHref) {
-            singleFilters.push(
-              `store=${storeHref};assortment=${aidHref}`,
-              `assortment=${aidHref};store=${storeHref}`,
-            );
-          }
+        const viaStoreOnly = await fetchByStoreOnly(new Set(chunk));
+        if (!viaStoreOnly) {
+          for (const aid of chunk) {
+            const aidHref = assortmentHrefById?.get?.(aid) || assortmentHrefById?.[aid] || null;
+            const singleFilters = [
+              `storeId=${sid};assortmentId=${aid}`,
+              `assortmentId=${aid};storeId=${sid}`,
+              `store=${storeHref};assortmentId=${aid}`,
+              `assortmentId=${aid};store=${storeHref}`,
+            ];
+            if (aidHref) {
+              singleFilters.push(
+                `store=${storeHref};assortment=${aidHref}`,
+                `assortment=${aidHref};store=${storeHref}`,
+              );
+            }
 
-          for (const filter of singleFilters) {
-            try {
-              const resp = await this.client.get('/report/stock/byslot/current', {
-                params: { filter, limit, offset: 0 }
-              });
-              const rows = resp.data?.rows || [];
-              if (rows.length > 0) {
-                chunkRows.push(...rows);
-                break;
+            for (const filter of singleFilters) {
+              try {
+                const resp = await this.client.get('/report/stock/byslot/current', {
+                  params: { filter, limit, offset: 0 }
+                });
+                const rows = resp.data?.rows || [];
+                if (rows.length > 0) {
+                  chunkRows.push(...rows);
+                  break;
+                }
+              } catch (err) {
+                console.error('[getSlotsCurrentForAssortments] single filter failed:', filter, err?.response?.status, err?.response?.data || err?.message || err);
               }
-            } catch (err) {
-              // пробуем следующий filter
             }
           }
         }
       }
 
-      // Возвращаем как есть; разбор id/qty делается в routes/products.js
       allRows.push(...chunkRows);
     }
 
     return allRows;
   }
+
 
 
   // Получить все ячейки (slots) выбранного склада.
