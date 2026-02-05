@@ -307,11 +307,14 @@ router.post('/sync', async (req, res) => {
         
         const chunkSize = 200;
         const bestSlotByAssortment = new Map();
+        let slotRowsFetched = 0;
 
         for (let i = 0; i < ids.length; i += chunkSize) {
           const chunk = ids.slice(i, i + chunkSize);
           const rows = await moysklad.getSlotsCurrentForAssortments(chunk, storeId);
-          console.log(`[sync] getSlotsCurrentForAssortments chunk ${i}-${i+chunk.length}: вернул ${rows?.length || 0} записей`);
+          const fetched = rows?.length || 0;
+          slotRowsFetched += fetched;
+          console.log(`[sync] getSlotsCurrentForAssortments chunk ${i}-${i+chunk.length}: вернул ${fetched} записей`);
           
           for (const r of Array.isArray(rows) ? rows : []) {
             const aid = String(r.assortmentId || '').trim();
@@ -337,7 +340,11 @@ router.post('/sync', async (req, res) => {
             slotId: slotId  // Сохраняем slotId для использования в API
           });
         }
-        slotsSyncCompleted = true;
+        if (slotRowsFetched > 0) {
+          slotsSyncCompleted = true;
+        } else {
+          console.warn('[sync] byslot/current вернул 0 строк. Сохраняем предыдущие ячейки из БД (fallback), чтобы не затирать адреса.');
+        }
         console.log(`[sync] Привязано ${cellById.size} товаров к ячейкам`);
         
         // Показываем первые 3 привязки для отладки
